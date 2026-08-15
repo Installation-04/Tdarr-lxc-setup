@@ -27,12 +27,13 @@ Run this **on the Proxmox VE host** shell:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lxc-setup/main/install.sh)"
 ```
 
-The script auto-detects the GPU on the host, then walks you through a
-`whiptail` GUI wizard (the same style of screen used by the Proxmox VE
-installer and the community-scripts helper scripts) asking for the
-container ID, hostname, resources, networking, storage paths, whether to
-enable GPU passthrough, and whether to deploy a full Tdarr server or just a
-node. Nothing runs until you confirm the summary screen at the end.
+The script auto-detects the GPU on the host, then asks **Use Default
+Settings?** — same as the community-scripts / ProxmoxVE helper scripts.
+Answer Yes to use the defaults below as-is (`4` vCPU / `4096`MB RAM /
+`12`GB disk, unprivileged, DHCP), or No to walk through the full `whiptail`
+wizard for container ID, hostname, resources, networking, storage paths,
+GPU passthrough, and whether to deploy a full Tdarr server or just a node.
+Nothing runs until you confirm the summary screen at the end.
 
 It then creates the container, deploys Tdarr, and sets up the shares + GUI.
 At the end it prints the Tdarr Web UI URL, the Cockpit GUI URL, and the
@@ -76,7 +77,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lx
 |---|---|---|
 | `CTID` | next free ID | Container ID |
 | `CT_HOSTNAME` | `tdarr` | Container hostname |
-| `DEBIAN_VERSION` | `13` | `13` (trixie) or `12` (bookworm) LXC template |
+| `var_version` | `13` | `13` (trixie) or `12` (bookworm) LXC template |
 | `CORES` | `4` | vCPU cores |
 | `RAM` | `4096` | RAM in MB |
 | `SWAP` | `512` | Swap in MB |
@@ -144,6 +145,18 @@ inside the Tdarr Web UI (Library → Transcode Options).
 
 ## Updating Tdarr
 
+Re-run the installer against an existing container in update mode (pulls
+fresh images and restarts the stack — it does not touch the container's
+config, resources, or shares):
+
 ```bash
-pct exec <CTID> -- bash -c "cd /opt/tdarr && docker compose pull && docker compose up -d"
+CTID=<CTID> bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lxc-setup/main/install.sh)" -- --update
 ```
+
+or equivalently:
+
+```bash
+CTID=<CTID> UPDATE=1 ./install.sh
+```
+
+This is the same thing `pct exec <CTID> -- bash -c "cd /opt/tdarr && docker compose pull && docker compose up -d"` does manually, if you'd rather run it by hand.
