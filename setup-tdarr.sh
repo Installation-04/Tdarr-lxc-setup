@@ -25,7 +25,7 @@ apt-get update -qq
 apt-get -y -qq upgrade
 
 msg_info "Installing base packages..."
-apt-get -y -qq install curl gnupg ca-certificates lsb-release apt-transport-https software-properties-common >/dev/null
+apt-get -y -qq install curl gnupg ca-certificates lsb-release apt-transport-https >/dev/null
 
 # ---------------------------------------------------------------------------
 # Docker
