@@ -1,6 +1,6 @@
 # Tdarr LXC Setup for Proxmox VE
 
-Spin up a Debian 12 LXC container on Proxmox with [Tdarr](https://tdarr.io/)
+Spin up a Debian 12 or Debian 13 LXC container on Proxmox with [Tdarr](https://tdarr.io/)
 pre-installed, automatic GPU passthrough (NVIDIA / Intel / AMD) for hardware
 transcoding, and Samba + NFS shares you can manage from a small web GUI.
 
@@ -45,6 +45,7 @@ generated Samba credentials.
 | GPU passthrough | Enable passthrough for the detected GPU? (skipped if none found) | Yes |
 | Container ID | CTID for the new container | next free ID |
 | Hostname | Container hostname | `tdarr` |
+| OS template | Debian 13 (trixie) or Debian 12 (bookworm) | `13` |
 | CPU cores | vCPU cores | `4` |
 | Memory | RAM in MB | `4096` |
 | Swap | Swap in MB | `512` |
@@ -75,6 +76,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lx
 |---|---|---|
 | `CTID` | next free ID | Container ID |
 | `CT_HOSTNAME` | `tdarr` | Container hostname |
+| `DEBIAN_VERSION` | `13` | `13` (trixie) or `12` (bookworm) LXC template |
 | `CORES` | `4` | vCPU cores |
 | `RAM` | `4096` | RAM in MB |
 | `SWAP` | `512` | Swap in MB |
