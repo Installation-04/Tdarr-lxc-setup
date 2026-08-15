@@ -27,17 +27,47 @@ Run this **on the Proxmox VE host** shell:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lxc-setup/main/install.sh)"
 ```
 
-That's it — the script creates the container, detects your GPU, deploys
-Tdarr, and sets up the shares + GUI. At the end it prints the Tdarr Web UI
-URL, the Cockpit GUI URL, and the generated Samba credentials.
+The script auto-detects the GPU on the host, then walks you through a
+`whiptail` GUI wizard (the same style of screen used by the Proxmox VE
+installer and the community-scripts helper scripts) asking for the
+container ID, hostname, resources, networking, storage paths, whether to
+enable GPU passthrough, and whether to deploy a full Tdarr server or just a
+node. Nothing runs until you confirm the summary screen at the end.
 
-## Configuration (optional env vars)
+It then creates the container, deploys Tdarr, and sets up the shares + GUI.
+At the end it prints the Tdarr Web UI URL, the Cockpit GUI URL, and the
+generated Samba credentials.
 
-Everything has a sensible default, but you can override any of these by
-setting env vars before running the one-liner, e.g.:
+### Wizard questions
+
+| Screen | Asks for | Default |
+|---|---|---|
+| GPU passthrough | Enable passthrough for the detected GPU? (skipped if none found) | Yes |
+| Container ID | CTID for the new container | next free ID |
+| Hostname | Container hostname | `tdarr` |
+| CPU cores | vCPU cores | `4` |
+| Memory | RAM in MB | `4096` |
+| Swap | Swap in MB | `512` |
+| Disk size | Root disk size in GB | `12` |
+| Container storage | Proxmox storage for the container disk | `local-lvm` |
+| Template storage | Proxmox storage holding the LXC template | `local` |
+| Network bridge | Bridge to attach to | `vmbr0` |
+| Networking | DHCP or static IP (asks for IP/gateway if static) | DHCP |
+| Container privilege | Unprivileged or privileged | Unprivileged |
+| Media library path | Host directory bind-mounted as the media library | `/mnt/tdarr_media` |
+| Tdarr config path | Host directory bind-mounted for server config/logs | `/mnt/tdarr_config` |
+| Tdarr mode | Full Server + local Node, or Node-only joining a remote server | Server + local Node |
+| Remote server (node mode only) | IP/hostname and port of the existing Tdarr server | — |
+| Node name | Name shown in the Tdarr UI | container hostname |
+
+### Unattended / scripted installs
+
+If you'd rather skip the GUI and drive the installer from env vars (e.g. in
+CI or a repeatable build pipeline), set `NONINTERACTIVE=1` — every setting
+below falls back to its default unless overridden:
 
 ```bash
-CTID=150 CT_HOSTNAME=tdarr RAM=8192 CORES=6 \
+NONINTERACTIVE=1 CTID=150 CT_HOSTNAME=tdarr RAM=8192 CORES=6 \
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lxc-setup/main/install.sh)"
 ```
 
@@ -52,29 +82,19 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lx
 | `STORAGE` | `local-lvm` | Proxmox storage for the container disk |
 | `TEMPLATE_STORAGE` | `local` | Proxmox storage holding the LXC template |
 | `BRIDGE` | `vmbr0` | Network bridge |
-| `NET_CONFIG` | DHCP on `vmbr0` | Full `pct` net string, override for static IP |
+| `NET_MODE` | `dhcp` | `dhcp` or `static` |
+| `STATIC_IP` / `STATIC_GW` | *(required if `NET_MODE=static`)* | e.g. `192.168.1.50/24` / `192.168.1.1` |
 | `MEDIA_HOST_PATH` | `/mnt/tdarr_media` | Host directory bind-mounted to `/mnt/media` in the container (point this at your existing media pool) |
 | `CONFIG_HOST_PATH` | `/mnt/tdarr_config` | Host directory bind-mounted to `/mnt/config` (Tdarr server/config/logs) |
 | `UNPRIVILEGED` | `1` | `0` for a privileged container if you hit GPU permission issues |
-
-### Server vs. Node-only mode
-
-By default the container runs a full **Tdarr Server + internal Node**
-(everything in one box). If you already have a Tdarr server elsewhere and
-just want this LXC to be an extra transcode **Node** (e.g. a GPU box that
-joins your existing Tdarr install), set:
-
-```bash
-TDARR_MODE=node REMOTE_SERVER_IP=192.168.1.50 REMOTE_SERVER_PORT=8266 \
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lxc-setup/main/install.sh)"
-```
-
-| Variable | Default | Description |
-|---|---|---|
 | `TDARR_MODE` | `server` | `server` (Server + local Node) or `node` (Node only, joins a remote server) |
 | `REMOTE_SERVER_IP` | *(required for `node`)* | IP/hostname of the existing Tdarr server |
 | `REMOTE_SERVER_PORT` | `8266` | Server API port of the existing Tdarr server |
 | `NODE_NAME` | `$CT_HOSTNAME` | Name this node shows up as in the Tdarr UI |
+| `ENABLE_GPU_PASSTHROUGH` | `1` | Set to `0` to skip passthrough even if a GPU was detected |
+
+GPU detection always runs automatically, in both modes — `NONINTERACTIVE=1`
+only skips the wizard's question screens.
 
 ## GPU passthrough details
 

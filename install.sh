@@ -17,9 +17,11 @@
 set -Eeuo pipefail
 
 # ---------------------------------------------------------------------------
-# Config (override with env vars, e.g. CTID=150 CT_HOSTNAME=tdarr bash install.sh)
+# Defaults - shown as the starting values in the on-screen questions below.
+# Set NONINTERACTIVE=1 to skip the GUI wizard and use these (or env-var
+# overrides) directly, e.g. for scripted/unattended installs.
 # ---------------------------------------------------------------------------
-CTID="${CTID:-$(pvesh get /cluster/nextid)}"
+CTID_DEFAULT="${CTID:-}"
 CT_HOSTNAME="${CT_HOSTNAME:-tdarr}"
 DISK_SIZE="${DISK_SIZE:-12}"          # GB, root disk
 CORES="${CORES:-4}"
@@ -28,7 +30,9 @@ SWAP="${SWAP:-512}"                   # MB
 BRIDGE="${BRIDGE:-vmbr0}"
 STORAGE="${STORAGE:-local-lvm}"
 TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"
-NET_CONFIG="${NET_CONFIG:-name=eth0,bridge=${BRIDGE},ip=dhcp,firewall=1}"
+NET_MODE="${NET_MODE:-dhcp}"          # dhcp | static
+STATIC_IP="${STATIC_IP:-}"            # e.g. 192.168.1.50/24
+STATIC_GW="${STATIC_GW:-}"            # e.g. 192.168.1.1
 MEDIA_HOST_PATH="${MEDIA_HOST_PATH:-/mnt/tdarr_media}"   # host path bind-mounted into the CT
 CONFIG_HOST_PATH="${CONFIG_HOST_PATH:-/mnt/tdarr_config}"
 UNPRIVILEGED="${UNPRIVILEGED:-1}"
@@ -41,9 +45,7 @@ REMOTE_SERVER_IP="${REMOTE_SERVER_IP:-}"       # required when TDARR_MODE=node
 REMOTE_SERVER_PORT="${REMOTE_SERVER_PORT:-8266}"
 NODE_NAME="${NODE_NAME:-${CT_HOSTNAME}}"
 
-if [[ "${TDARR_MODE}" == "node" && -z "${REMOTE_SERVER_IP}" ]]; then
-  die "TDARR_MODE=node requires REMOTE_SERVER_IP=<ip-of-existing-tdarr-server> to be set."
-fi
+NONINTERACTIVE="${NONINTERACTIVE:-0}"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -58,12 +60,23 @@ die()  { echo -e "${C_RED}[error]${C_RESET} $*" >&2; exit 1; }
 command -v pveversion >/dev/null 2>&1 || die "pveversion not found - this must run on a Proxmox VE host."
 command -v pct >/dev/null 2>&1 || die "pct not found - this must run on a Proxmox VE host."
 
+if [[ "${NONINTERACTIVE}" != "1" ]] && ! command -v whiptail >/dev/null 2>&1; then
+  msg "Installing whiptail for the setup GUI..."
+  apt-get -qq update >/dev/null 2>&1 || true
+  apt-get -y -qq install whiptail >/dev/null 2>&1 || true
+fi
+
+WT_BACKTITLE="Tdarr LXC Setup for Proxmox VE"
+
 # ---------------------------------------------------------------------------
-# GPU detection (host side)
+# GPU detection (host side) - run up front so the wizard can show what was
+# found and let the user opt out of passthrough.
 # ---------------------------------------------------------------------------
 HAS_NVIDIA=0
 HAS_VAAPI=0   # Intel QuickSync or AMD VCN, both use /dev/dri + VAAPI
 NVIDIA_DRIVER_VERSION=""
+GPU_SUMMARY="No supported GPU detected - CPU (software) transcoding only."
+ENABLE_GPU_PASSTHROUGH="${ENABLE_GPU_PASSTHROUGH:-1}"
 
 detect_gpu() {
   msg "Detecting GPU hardware on host..."
@@ -71,20 +84,128 @@ detect_gpu() {
   if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
     HAS_NVIDIA=1
     NVIDIA_DRIVER_VERSION="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -n1)"
-    ok "NVIDIA GPU detected (driver ${NVIDIA_DRIVER_VERSION}): $(nvidia-smi -L | head -n1)"
+    GPU_SUMMARY="NVIDIA GPU detected (driver ${NVIDIA_DRIVER_VERSION}): $(nvidia-smi -L | head -n1)"
+    ok "${GPU_SUMMARY}"
   fi
 
   if [[ -d /dev/dri ]] && ls /dev/dri/renderD* >/dev/null 2>&1; then
     if lspci -nnk | grep -Ei "vga|3d|display" | grep -Eiq "intel|amd|ati"; then
       HAS_VAAPI=1
-      ok "VAAPI-capable GPU detected on host: $(lspci -nnk | grep -Ei 'vga|3d|display' | grep -Ei 'intel|amd|ati' | head -n1)"
+      GPU_SUMMARY="VAAPI-capable GPU detected: $(lspci -nnk | grep -Ei 'vga|3d|display' | grep -Ei 'intel|amd|ati' | head -n1)"
+      ok "${GPU_SUMMARY}"
     fi
   fi
 
   if [[ $HAS_NVIDIA -eq 0 && $HAS_VAAPI -eq 0 ]]; then
-    warn "No supported GPU detected - Tdarr will run with software (CPU) transcoding only."
+    warn "${GPU_SUMMARY}"
   fi
 }
+
+detect_gpu
+
+# whiptail input box; prints the answer to stdout, exits the script if the
+# user hits Cancel.
+ask_input() {
+  local title="$1" text="$2" default="$3"
+  whiptail --backtitle "${WT_BACKTITLE}" --title "${title}" \
+    --inputbox "${text}" 12 70 "${default}" 3>&1 1>&2 2>&3 || die "Setup cancelled."
+}
+
+ask_menu() {
+  local title="$1" text="$2"; shift 2
+  whiptail --backtitle "${WT_BACKTITLE}" --title "${title}" \
+    --menu "${text}" 15 70 4 "$@" 3>&1 1>&2 2>&3 || die "Setup cancelled."
+}
+
+run_wizard() {
+  whiptail --backtitle "${WT_BACKTITLE}" --title "Welcome" --msgbox \
+"This wizard will ask a few questions to set up Tdarr in a new LXC container.\n\nGPU check on this host:\n${GPU_SUMMARY}" 14 70
+
+  if [[ $HAS_NVIDIA -eq 1 || $HAS_VAAPI -eq 1 ]]; then
+    if whiptail --backtitle "${WT_BACKTITLE}" --title "GPU passthrough" \
+        --yesno "Enable GPU passthrough into the container for hardware transcoding?\n\n${GPU_SUMMARY}" 12 70; then
+      ENABLE_GPU_PASSTHROUGH=1
+    else
+      ENABLE_GPU_PASSTHROUGH=0
+    fi
+  else
+    ENABLE_GPU_PASSTHROUGH=0
+  fi
+
+  CTID="$(ask_input "Container ID" "CTID for the new container:" "${CTID_DEFAULT:-$(pvesh get /cluster/nextid)}")"
+  CT_HOSTNAME="$(ask_input "Hostname" "Hostname for the container:" "${CT_HOSTNAME}")"
+  CORES="$(ask_input "CPU cores" "Number of vCPU cores:" "${CORES}")"
+  RAM="$(ask_input "Memory" "RAM in MB:" "${RAM}")"
+  SWAP="$(ask_input "Swap" "Swap in MB:" "${SWAP}")"
+  DISK_SIZE="$(ask_input "Disk size" "Root disk size in GB:" "${DISK_SIZE}")"
+  STORAGE="$(ask_input "Container storage" "Proxmox storage for the container disk:" "${STORAGE}")"
+  TEMPLATE_STORAGE="$(ask_input "Template storage" "Proxmox storage holding the LXC template:" "${TEMPLATE_STORAGE}")"
+  BRIDGE="$(ask_input "Network bridge" "Bridge to attach the container to:" "${BRIDGE}")"
+
+  NET_MODE="$(ask_menu "Networking" "How should the container get its IP?" \
+    "dhcp" "Automatic (DHCP)" \
+    "static" "Static IP address")"
+  if [[ "${NET_MODE}" == "static" ]]; then
+    STATIC_IP="$(ask_input "Static IP" "IP address with CIDR, e.g. 192.168.1.50/24:" "${STATIC_IP}")"
+    STATIC_GW="$(ask_input "Gateway" "Gateway IP, e.g. 192.168.1.1:" "${STATIC_GW}")"
+  fi
+
+  if whiptail --backtitle "${WT_BACKTITLE}" --title "Container privilege" \
+      --yesno "Create an UNPRIVILEGED container? (Recommended. Choose No only if you hit GPU permission issues.)" 10 70; then
+    UNPRIVILEGED=1
+  else
+    UNPRIVILEGED=0
+  fi
+
+  MEDIA_HOST_PATH="$(ask_input "Media library path" "Host directory to bind-mount as the media library (point this at your existing media pool):" "${MEDIA_HOST_PATH}")"
+  CONFIG_HOST_PATH="$(ask_input "Tdarr config path" "Host directory to bind-mount for Tdarr's server config/logs:" "${CONFIG_HOST_PATH}")"
+
+  TDARR_MODE="$(ask_menu "Tdarr mode" "Deploy a full Tdarr Server (+ local Node), or just a Node that joins an existing remote server?" \
+    "server" "Server + local Node (all-in-one, recommended)" \
+    "node" "Node only (connect to an existing remote Tdarr server)")"
+
+  if [[ "${TDARR_MODE}" == "node" ]]; then
+    REMOTE_SERVER_IP="$(ask_input "Remote Tdarr server" "IP/hostname of the existing Tdarr server:" "${REMOTE_SERVER_IP}")"
+    REMOTE_SERVER_PORT="$(ask_input "Remote Tdarr server port" "Server API port on the remote Tdarr server:" "${REMOTE_SERVER_PORT}")"
+  fi
+  NODE_NAME="$(ask_input "Node name" "Name this node shows up as in the Tdarr UI:" "${NODE_NAME:-$CT_HOSTNAME}")"
+
+  local summary="CTID:            ${CTID}
+Hostname:        ${CT_HOSTNAME}
+CPU / RAM / Swap: ${CORES} cores / ${RAM}MB / ${SWAP}MB
+Disk:            ${DISK_SIZE}GB on ${STORAGE}
+Network:         ${BRIDGE}, $( [[ "${NET_MODE}" == "static" ]] && echo "static ${STATIC_IP} via ${STATIC_GW}" || echo "DHCP" )
+Privilege:       $( [[ ${UNPRIVILEGED} -eq 1 ]] && echo unprivileged || echo privileged )
+Media path:      ${MEDIA_HOST_PATH}
+Config path:     ${CONFIG_HOST_PATH}
+GPU passthrough: $( [[ ${ENABLE_GPU_PASSTHROUGH} -eq 1 ]] && echo "yes - ${GPU_SUMMARY}" || echo "no (CPU transcoding)" )
+Mode:            ${TDARR_MODE}$( [[ "${TDARR_MODE}" == "node" ]] && echo " -> ${REMOTE_SERVER_IP}:${REMOTE_SERVER_PORT}" )
+Node name:       ${NODE_NAME}"
+
+  whiptail --backtitle "${WT_BACKTITLE}" --title "Confirm" --yesno "${summary}\n\nProceed with this setup?" 22 76 || die "Setup cancelled."
+}
+
+if [[ "${NONINTERACTIVE}" != "1" ]] && command -v whiptail >/dev/null 2>&1; then
+  run_wizard
+else
+  CTID="${CTID_DEFAULT:-$(pvesh get /cluster/nextid)}"
+fi
+
+if [[ "${ENABLE_GPU_PASSTHROUGH}" != "1" ]]; then
+  HAS_NVIDIA=0
+  HAS_VAAPI=0
+fi
+
+if [[ "${NET_MODE}" == "static" ]]; then
+  [[ -n "${STATIC_IP}" && -n "${STATIC_GW}" ]] || die "Static networking requires an IP and gateway."
+  NET_CONFIG="name=eth0,bridge=${BRIDGE},ip=${STATIC_IP},gw=${STATIC_GW},firewall=1"
+else
+  NET_CONFIG="name=eth0,bridge=${BRIDGE},ip=dhcp,firewall=1"
+fi
+
+if [[ "${TDARR_MODE}" == "node" && -z "${REMOTE_SERVER_IP}" ]]; then
+  die "TDARR_MODE=node requires REMOTE_SERVER_IP=<ip-of-existing-tdarr-server> to be set."
+fi
 
 # ---------------------------------------------------------------------------
 # Container creation
@@ -213,7 +334,6 @@ print_summary() {
 }
 
 main() {
-  detect_gpu
   local volid
   volid="$(ensure_template)"
   create_container "${volid}"
