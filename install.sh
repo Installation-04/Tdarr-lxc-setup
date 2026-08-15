@@ -45,6 +45,7 @@ TEMPLATE_STORAGE="${TEMPLATE_STORAGE:-local}"
 NET_MODE="${NET_MODE:-dhcp}"          # dhcp | static
 STATIC_IP="${STATIC_IP:-}"            # e.g. 192.168.1.50/24
 STATIC_GW="${STATIC_GW:-}"            # e.g. 192.168.1.1
+VLAN_TAG="${VLAN_TAG:-}"              # e.g. 20; blank = no VLAN tagging
 MEDIA_HOST_PATH="${MEDIA_HOST_PATH:-/mnt/tdarr_media}"   # host path bind-mounted into the CT
 CONFIG_HOST_PATH="${CONFIG_HOST_PATH:-/mnt/tdarr_config}"
 GH_RAW_BASE="${GH_RAW_BASE:-https://raw.githubusercontent.com/installation-04/tdarr-lxc-setup/main}"
@@ -221,6 +222,7 @@ advanced_settings() {
   STORAGE="$(ask_input "Container storage" "Proxmox storage for the container disk:" "${STORAGE}")"
   TEMPLATE_STORAGE="$(ask_input "Template storage" "Proxmox storage holding the LXC template:" "${TEMPLATE_STORAGE}")"
   BRIDGE="$(ask_input "Network bridge" "Bridge to attach the container to:" "${BRIDGE}")"
+  VLAN_TAG="$(ask_input "VLAN tag" "VLAN tag for the container's network interface (leave blank for none):" "${VLAN_TAG}")"
 
   NET_MODE="$(ask_menu "Networking" "How should the container get its IP?" \
     "dhcp" "Automatic (DHCP)" \
@@ -254,7 +256,7 @@ advanced_settings() {
 Hostname:        ${CT_HOSTNAME}
 CPU / RAM / Swap: ${CORES} cores / ${RAM}MB / ${SWAP}MB
 Disk:            ${DISK_SIZE}GB on ${STORAGE}
-Network:         ${BRIDGE}, $( [[ "${NET_MODE}" == "static" ]] && echo "static ${STATIC_IP} via ${STATIC_GW}" || echo "DHCP" )
+Network:         ${BRIDGE}$( [[ -n "${VLAN_TAG}" ]] && echo " (VLAN ${VLAN_TAG})" ), $( [[ "${NET_MODE}" == "static" ]] && echo "static ${STATIC_IP} via ${STATIC_GW}" || echo "DHCP" )
 Privilege:       $( [[ ${UNPRIVILEGED} -eq 1 ]] && echo unprivileged || echo privileged )
 Media path:      ${MEDIA_HOST_PATH}
 Config path:     ${CONFIG_HOST_PATH}
@@ -292,6 +294,7 @@ if [[ "${NET_MODE}" == "static" ]]; then
 else
   NET_CONFIG="name=eth0,bridge=${BRIDGE},ip=dhcp,firewall=1"
 fi
+[[ -n "${VLAN_TAG}" ]] && NET_CONFIG="${NET_CONFIG},tag=${VLAN_TAG}"
 
 if [[ "${TDARR_MODE}" == "node" && -z "${REMOTE_SERVER_IP}" ]]; then
   die "TDARR_MODE=node requires REMOTE_SERVER_IP=<ip-of-existing-tdarr-server> to be set."
@@ -320,6 +323,17 @@ create_container() {
   msg_info "Creating CT ${CTID} (${CT_HOSTNAME}) - ${CORES} vCPU / ${RAM}MB RAM / ${DISK_SIZE}GB disk..."
 
   mkdir -p "${MEDIA_HOST_PATH}" "${CONFIG_HOST_PATH}"
+
+  if [[ "${UNPRIVILEGED}" -eq 1 ]]; then
+    # Unprivileged containers map root (uid/gid 0) to a subordinate id on
+    # the host (100000 by Proxmox's default /etc/subuid|subgid), so
+    # bind-mounted host directories must be owned by that id or the
+    # container's root can't create/write files in them.
+    local map_uid map_gid
+    map_uid="$(awk -F: '$1=="root"{print $2}' /etc/subuid 2>/dev/null | head -n1)"
+    map_gid="$(awk -F: '$1=="root"{print $2}' /etc/subgid 2>/dev/null | head -n1)"
+    chown -R "${map_uid:-100000}:${map_gid:-100000}" "${MEDIA_HOST_PATH}" "${CONFIG_HOST_PATH}"
+  fi
 
   pct create "${CTID}" "${template_volid}" \
     --hostname "${CT_HOSTNAME}" \
