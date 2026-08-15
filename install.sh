@@ -158,9 +158,12 @@ detect_gpu() {
   fi
 
   if [[ -d /dev/dri ]] && ls /dev/dri/renderD* >/dev/null 2>&1; then
-    if lspci -nnk | grep -Ei "vga|3d|display" | grep -Eiq "intel|amd|ati"; then
+    # Match on PCI vendor ID (8086 = Intel, 1002 = AMD/ATI graphics), not the
+    # free-text device name - "NVIDIA Corporation" contains the substring
+    # "ati" (corpoRATIon) and would otherwise false-positive as VAAPI-capable.
+    if lspci -nnk | grep -Ei "vga|3d|display" | grep -Eq '\[(8086|1002):[0-9a-fA-F]{4}\]'; then
       HAS_VAAPI=1
-      GPU_SUMMARY="VAAPI-capable GPU detected: $(lspci -nnk | grep -Ei 'vga|3d|display' | grep -Ei 'intel|amd|ati' | head -n1)"
+      GPU_SUMMARY="VAAPI-capable GPU detected: $(lspci -nnk | grep -Ei 'vga|3d|display' | grep -E '\[(8086|1002):[0-9a-fA-F]{4}\]' | head -n1)"
       msg_ok "${GPU_SUMMARY}"
     fi
   fi
