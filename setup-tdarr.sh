@@ -13,10 +13,42 @@ TDARR_MODE="${TDARR_MODE:-server}"          # server | node
 REMOTE_SERVER_IP="${REMOTE_SERVER_IP:-}"
 REMOTE_SERVER_PORT="${REMOTE_SERVER_PORT:-8266}"
 NODE_NAME="${NODE_NAME:-tdarr-node}"
+VERBOSE="${VERBOSE:-0}"
 
-C_RESET="\e[0m"; C_GREEN="\e[32m"; C_BLUE="\e[36m"
+C_RESET="\e[0m"; C_GREEN="\e[32m"; C_BLUE="\e[36m"; C_RED="\e[31m"
 msg_info() { echo -e "${C_BLUE}[setup]${C_RESET} $*"; }
-msg_ok()  { echo -e "${C_GREEN}[ok]${C_RESET} $*"; }
+msg_ok()   { echo -e "${C_GREEN}[ok]${C_RESET} $*"; }
+msg_error() { echo -e "${C_RED}[error]${C_RESET} $*"; }
+
+# ---------------------------------------------------------------------------
+# Quiet-by-default output: every noisy command is prefixed with $STD, which
+# is a no-op in verbose mode and redirects to LOGFILE otherwise. Only the
+# msg_info/msg_ok step lines above show on screen; the full log is kept on
+# disk and its tail gets dumped automatically if a step fails.
+# ---------------------------------------------------------------------------
+LOGFILE="/var/log/tdarr-setup.log"
+: > "${LOGFILE}"
+
+silent() { "$@" >>"${LOGFILE}" 2>&1; }
+
+if [[ "${VERBOSE}" == "1" ]]; then
+  STD=""
+else
+  STD="silent"
+fi
+
+on_error() {
+  local line="$1"
+  msg_error "Setup failed at line ${line}."
+  if [[ "${VERBOSE}" != "1" && -s "${LOGFILE}" ]]; then
+    echo "----- last 40 lines of ${LOGFILE} -----" >&2
+    tail -n 40 "${LOGFILE}" >&2
+    echo "----------------------------------------" >&2
+    echo "Full log: ${LOGFILE} (inside this container)" >&2
+  fi
+  exit 1
+}
+trap 'on_error $LINENO' ERR
 
 export DEBIAN_FRONTEND=noninteractive
 # The base template has no locales generated, so apt/perl fall back to "C"
@@ -25,19 +57,21 @@ export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 
 msg_info "Updating base system..."
-apt-get update -qq
-apt-get -y -qq upgrade
+$STD apt-get update -qq
+$STD apt-get -y -qq upgrade
 
 msg_info "Installing base packages..."
-apt-get -y -qq install curl gnupg ca-certificates lsb-release apt-transport-https >/dev/null
+$STD apt-get -y -qq install curl gnupg ca-certificates lsb-release apt-transport-https
 
 # ---------------------------------------------------------------------------
 # Docker
 # ---------------------------------------------------------------------------
+install_docker() { curl -fsSL https://get.docker.com | sh; }
+
 if ! command -v docker >/dev/null 2>&1; then
   msg_info "Installing Docker..."
-  curl -fsSL https://get.docker.com | sh >/dev/null
-  systemctl enable --now docker >/dev/null 2>&1
+  $STD install_docker
+  $STD systemctl enable --now docker
 fi
 msg_ok "Docker ready: $(docker --version)"
 
@@ -57,30 +91,33 @@ if [[ "${HAS_VAAPI}" == "1" ]]; then
       sed -i -E 's/^(deb(-src)? [^#]*\bmain\b)$/\1 contrib non-free non-free-firmware/' "${f}"
     fi
   done
-  apt-get update -qq || true
-  apt-get -y -qq install va-driver-all vainfo intel-media-va-driver-non-free ocl-icd-libopencl1 >/dev/null || true
+  $STD apt-get update -qq || true
+  $STD apt-get -y -qq install va-driver-all vainfo intel-media-va-driver-non-free ocl-icd-libopencl1 || true
 fi
 
 if [[ "${HAS_NVIDIA}" == "1" && -n "${NVIDIA_DRIVER_VERSION}" ]]; then
   msg_info "Installing matching NVIDIA userland driver (${NVIDIA_DRIVER_VERSION})..."
-  apt-get -y -qq install build-essential pkg-config libglvnd-dev >/dev/null || true
+  $STD apt-get -y -qq install build-essential pkg-config libglvnd-dev || true
   RUNFILE="NVIDIA-Linux-x86_64-${NVIDIA_DRIVER_VERSION}.run"
-  if curl -fsSL -o "/tmp/${RUNFILE}" "https://download.nvidia.com/XFree86/Linux-x86_64/${NVIDIA_DRIVER_VERSION}/${RUNFILE}"; then
-    sh "/tmp/${RUNFILE}" --no-kernel-module --silent --no-nouveau-check --no-nvidia-modprobe --no-systemd || \
-      echo "[warn] NVIDIA userland install failed - driver version may not be publicly hosted; verify host/container driver match manually."
+  if $STD curl -fsSL -o "/tmp/${RUNFILE}" "https://download.nvidia.com/XFree86/Linux-x86_64/${NVIDIA_DRIVER_VERSION}/${RUNFILE}"; then
+    $STD sh "/tmp/${RUNFILE}" --no-kernel-module --silent --no-nouveau-check --no-nvidia-modprobe --no-systemd || \
+      msg_error "NVIDIA userland install failed - driver version may not be publicly hosted; verify host/container driver match manually."
     rm -f "/tmp/${RUNFILE}"
   else
-    echo "[warn] Could not download NVIDIA driver ${NVIDIA_DRIVER_VERSION} - skipping automatic install."
+    msg_error "Could not download NVIDIA driver ${NVIDIA_DRIVER_VERSION} - skipping automatic install."
   fi
   # NVIDIA Container Toolkit so Docker can see the GPU
-  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-  curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-    > /etc/apt/sources.list.d/nvidia-container-toolkit.list
-  apt-get update -qq
-  apt-get -y -qq install nvidia-container-toolkit >/dev/null || echo "[warn] nvidia-container-toolkit install failed."
-  nvidia-ctk runtime configure --runtime=docker >/dev/null 2>&1 || true
-  systemctl restart docker
+  add_nvidia_ctk_repo() {
+    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+    curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+      sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
+      > /etc/apt/sources.list.d/nvidia-container-toolkit.list
+  }
+  $STD add_nvidia_ctk_repo
+  $STD apt-get update -qq
+  $STD apt-get -y -qq install nvidia-container-toolkit || msg_error "nvidia-container-toolkit install failed."
+  $STD nvidia-ctk runtime configure --runtime=docker || true
+  $STD systemctl restart docker
 fi
 
 # ---------------------------------------------------------------------------
@@ -168,14 +205,15 @@ EOF
 fi
 
 msg_info "Starting Tdarr..."
-(cd /opt/tdarr && docker compose up -d)
+start_tdarr() { cd /opt/tdarr && docker compose up -d; }
+$STD start_tdarr
 msg_ok "Tdarr containers started."
 
 # ---------------------------------------------------------------------------
 # Samba + NFS
 # ---------------------------------------------------------------------------
 msg_info "Installing Samba + NFS server..."
-apt-get -y -qq install samba nfs-kernel-server >/dev/null
+$STD apt-get -y -qq install samba nfs-kernel-server
 
 if ! grep -q "^\[Media\]" /etc/samba/smb.conf 2>/dev/null; then
   cat >> /etc/samba/smb.conf <<'EOF'
@@ -192,16 +230,17 @@ fi
 
 SMB_USER="tdarr"
 SMB_PASS="${SMB_PASS:-$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)}"
-id -u "${SMB_USER}" >/dev/null 2>&1 || useradd -M -s /usr/sbin/nologin "${SMB_USER}"
-(echo "${SMB_PASS}"; echo "${SMB_PASS}") | smbpasswd -a -s "${SMB_USER}" >/dev/null
-smbpasswd -e "${SMB_USER}" >/dev/null
-systemctl enable --now smbd nmbd >/dev/null 2>&1
+id -u "${SMB_USER}" >/dev/null 2>&1 || $STD useradd -M -s /usr/sbin/nologin "${SMB_USER}"
+set_smb_password() { (echo "${SMB_PASS}"; echo "${SMB_PASS}") | smbpasswd -a -s "${SMB_USER}"; }
+$STD set_smb_password
+$STD smbpasswd -e "${SMB_USER}"
+$STD systemctl enable --now smbd nmbd
 
 if ! grep -q "^/mnt/media" /etc/exports 2>/dev/null; then
   echo "/mnt/media *(rw,sync,no_subtree_check,no_root_squash)" >> /etc/exports
 fi
-exportfs -ra
-systemctl enable --now nfs-kernel-server >/dev/null 2>&1
+$STD exportfs -ra
+$STD systemctl enable --now nfs-kernel-server
 
 echo "${SMB_USER}:${SMB_PASS}" > /root/tdarr_smb_credentials.txt
 chmod 600 /root/tdarr_smb_credentials.txt
@@ -210,10 +249,11 @@ chmod 600 /root/tdarr_smb_credentials.txt
 # Cockpit + file-sharing GUI (manage the Samba/NFS shares from a browser)
 # ---------------------------------------------------------------------------
 msg_info "Installing Cockpit share-management GUI..."
-apt-get -y -qq install cockpit >/dev/null
-curl -fsSL https://repo.45drives.com/setup | bash >/dev/null 2>&1 || true
-apt-get -y -qq install cockpit-file-sharing cockpit-navigator >/dev/null 2>&1 || true
-systemctl enable --now cockpit.socket >/dev/null 2>&1
+$STD apt-get -y -qq install cockpit
+install_cockpit_file_sharing() { curl -fsSL https://repo.45drives.com/setup | bash; }
+$STD install_cockpit_file_sharing || true
+$STD apt-get -y -qq install cockpit-file-sharing cockpit-navigator || true
+$STD systemctl enable --now cockpit.socket
 
 msg_ok "Setup complete."
 echo
@@ -221,3 +261,4 @@ echo "Samba user:     ${SMB_USER}"
 echo "Samba password: ${SMB_PASS}  (also saved to /root/tdarr_smb_credentials.txt)"
 echo "NFS export:     /mnt/media"
 echo "Manage shares:  https://<container-ip>:9090 (Cockpit)"
+[[ "${VERBOSE}" != "1" ]] && echo "Full install log: ${LOGFILE} (inside this container)"
