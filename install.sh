@@ -7,7 +7,7 @@
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lxc-setup/main/install.sh)"
 #
 # What it does:
-#   - Creates a Debian 12 LXC container
+#   - Creates a Debian 12 (bookworm) or Debian 13 (trixie) LXC container
 #   - Detects GPU(s) on the Proxmox host (NVIDIA / Intel / AMD) and wires up
 #     passthrough automatically so Tdarr can hardware-transcode
 #   - Installs Docker + deploys Tdarr Server & Node inside the container
@@ -23,6 +23,7 @@ set -Eeuo pipefail
 # ---------------------------------------------------------------------------
 CTID_DEFAULT="${CTID:-}"
 CT_HOSTNAME="${CT_HOSTNAME:-tdarr}"
+DEBIAN_VERSION="${DEBIAN_VERSION:-13}"   # 12 (bookworm) or 13 (trixie)
 DISK_SIZE="${DISK_SIZE:-12}"          # GB, root disk
 CORES="${CORES:-4}"
 RAM="${RAM:-4096}"                    # MB
@@ -134,6 +135,11 @@ run_wizard() {
 
   CTID="$(ask_input "Container ID" "CTID for the new container:" "${CTID_DEFAULT:-$(pvesh get /cluster/nextid)}")"
   CT_HOSTNAME="$(ask_input "Hostname" "Hostname for the container:" "${CT_HOSTNAME}")"
+
+  DEBIAN_VERSION="$(ask_menu "OS template" "Which Debian release should the container run?" \
+    "13" "Debian 13 (trixie) - recommended" \
+    "12" "Debian 12 (bookworm)")"
+
   CORES="$(ask_input "CPU cores" "Number of vCPU cores:" "${CORES}")"
   RAM="$(ask_input "Memory" "RAM in MB:" "${RAM}")"
   SWAP="$(ask_input "Swap" "Swap in MB:" "${SWAP}")"
@@ -172,6 +178,7 @@ run_wizard() {
 
   local summary="CTID:            ${CTID}
 Hostname:        ${CT_HOSTNAME}
+OS template:     Debian ${DEBIAN_VERSION}
 CPU / RAM / Swap: ${CORES} cores / ${RAM}MB / ${SWAP}MB
 Disk:            ${DISK_SIZE}GB on ${STORAGE}
 Network:         ${BRIDGE}, $( [[ "${NET_MODE}" == "static" ]] && echo "static ${STATIC_IP} via ${STATIC_GW}" || echo "DHCP" )
@@ -211,15 +218,26 @@ fi
 # Container creation
 # ---------------------------------------------------------------------------
 ensure_template() {
-  local template="debian-12-standard_12.7-1_amd64.tar.zst"
+  local pattern="^debian-${DEBIAN_VERSION}-standard"
+  local fallback
+  case "${DEBIAN_VERSION}" in
+    13) fallback="debian-13-standard_13.0-1_amd64.tar.zst" ;;
+    12) fallback="debian-12-standard_12.7-1_amd64.tar.zst" ;;
+    *)  die "Unsupported DEBIAN_VERSION '${DEBIAN_VERSION}' - use 12 or 13." ;;
+  esac
+
   msg "Updating LXC template list..."
   pveam update >/dev/null 2>&1 || true
-  if ! pveam list "${TEMPLATE_STORAGE}" 2>/dev/null | grep -q "${template}"; then
+
+  local template
+  template="$(pveam list "${TEMPLATE_STORAGE}" 2>/dev/null | awk '{print $1}' | sed "s#.*/##" | grep -E "${pattern}" | sort -V | tail -n1)"
+
+  if [[ -z "${template}" ]]; then
     local latest
-    latest="$(pveam available -section system | awk '{print $2}' | grep -E '^debian-12-standard' | sort -V | tail -n1)"
-    template="${latest:-$template}"
+    latest="$(pveam available -section system | awk '{print $2}' | grep -E "${pattern}" | sort -V | tail -n1)"
+    template="${latest:-$fallback}"
     msg "Downloading template ${template}..."
-    pveam download "${TEMPLATE_STORAGE}" "${template}"
+    pveam download "${TEMPLATE_STORAGE}" "${template}" || die "Failed to download ${template} - is Debian ${DEBIAN_VERSION} available on this Proxmox version yet?"
   fi
   echo "${TEMPLATE_STORAGE}:vztmpl/${template}"
 }
