@@ -53,6 +53,7 @@ generated Samba credentials.
 | Container storage | Proxmox storage for the container disk | `local-lvm` |
 | Template storage | Proxmox storage holding the LXC template | `local` |
 | Network bridge | Bridge to attach to | `vmbr0` |
+| VLAN tag | VLAN tag for the container's network interface (blank = none) | *(none)* |
 | Networking | DHCP or static IP (asks for IP/gateway if static) | DHCP |
 | Container privilege | Unprivileged or privileged | Unprivileged |
 | Media library path | Host directory bind-mounted as the media library | `/mnt/tdarr_media` |
@@ -83,6 +84,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lx
 | `STORAGE` | `local-lvm` | Proxmox storage for the container disk |
 | `TEMPLATE_STORAGE` | `local` | Proxmox storage holding the LXC template |
 | `BRIDGE` | `vmbr0` | Network bridge |
+| `VLAN_TAG` | *(none)* | VLAN tag for the container's network interface; leave unset for no VLAN |
 | `NET_MODE` | `dhcp` | `dhcp` or `static` |
 | `STATIC_IP` / `STATIC_GW` | *(required if `NET_MODE=static`)* | e.g. `192.168.1.50/24` / `192.168.1.1` |
 | `MEDIA_HOST_PATH` | `/mnt/tdarr_media` | Host directory bind-mounted to `/mnt/media` in the container (point this at your existing media pool) |
@@ -158,3 +160,16 @@ CTID=<CTID> UPDATE=1 ./install.sh
 ```
 
 This is the same thing `pct exec <CTID> -- bash -c "cd /opt/tdarr && docker compose pull && docker compose up -d"` does manually, if you'd rather run it by hand.
+
+## Troubleshooting
+
+**`mkdir: cannot create directory '/mnt/config/...': Permission denied`
+during setup** — unprivileged containers (the default) map their root user
+to a subordinate uid/gid on the Proxmox host, so bind-mounted host
+directories need to be owned by that mapped id, not real root. The
+installer now `chown`s `MEDIA_HOST_PATH`/`CONFIG_HOST_PATH` to the host's
+default subordinate id (from `/etc/subuid`/`/etc/subgid`, normally
+`100000`) before creating the container. If you still hit this on a host
+with custom subuid/subgid ranges, either fix the ownership manually
+(`chown -R <mapped-uid>:<mapped-gid> <path>`) or re-run with
+`UNPRIVILEGED=0` for a privileged container.
