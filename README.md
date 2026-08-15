@@ -87,7 +87,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lx
 | `SWAP` | `512` | Swap in MB |
 | `var_disk` | `12` | Root disk size in GB |
 | `var_os` | `debian` | LXC template OS |
-| `var_version` | `12` | LXC template OS version |
+| `var_version` | `13` | LXC template OS version |
 | `var_unprivileged` | `1` | `0` for a privileged container if you hit GPU permission issues |
 | `var_tags` | `media;transcode` | Proxmox tags applied to the container |
 | `STORAGE` | `local-lvm` | Proxmox storage for the container disk |
