@@ -69,18 +69,27 @@ CI or a repeatable build pipeline), set `NONINTERACTIVE=1` — every setting
 below falls back to its default unless overridden:
 
 ```bash
-NONINTERACTIVE=1 CTID=150 CT_HOSTNAME=tdarr RAM=8192 CORES=6 \
+NONINTERACTIVE=1 CTID=150 CT_HOSTNAME=tdarr var_ram=8192 var_cpu=6 \
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lxc-setup/main/install.sh)"
 ```
+
+> **Note:** CPU/RAM/disk/privilege/OS-template come from the `var_*`
+> settings below, not from separate `CORES`/`RAM`/`DISK_SIZE`/`UNPRIVILEGED`
+> variables — this matches the community-scripts/ProxmoxVE convention the
+> installer follows. Everything else in the table is a plain env var.
 
 | Variable | Default | Description |
 |---|---|---|
 | `CTID` | next free ID | Container ID |
 | `CT_HOSTNAME` | `tdarr` | Container hostname |
-| `CORES` | `4` | vCPU cores |
-| `RAM` | `4096` | RAM in MB |
+| `var_cpu` | `4` | vCPU cores |
+| `var_ram` | `4096` | RAM in MB |
 | `SWAP` | `512` | Swap in MB |
-| `DISK_SIZE` | `12` | Root disk size in GB |
+| `var_disk` | `12` | Root disk size in GB |
+| `var_os` | `debian` | LXC template OS |
+| `var_version` | `12` | LXC template OS version |
+| `var_unprivileged` | `1` | `0` for a privileged container if you hit GPU permission issues |
+| `var_tags` | `media;transcode` | Proxmox tags applied to the container |
 | `STORAGE` | `local-lvm` | Proxmox storage for the container disk |
 | `TEMPLATE_STORAGE` | `local` | Proxmox storage holding the LXC template |
 | `BRIDGE` | `vmbr0` | Network bridge |
@@ -89,7 +98,6 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lx
 | `STATIC_IP` / `STATIC_GW` | *(required if `NET_MODE=static`)* | e.g. `192.168.1.50/24` / `192.168.1.1` |
 | `MEDIA_HOST_PATH` | `/mnt/tdarr_media` | Host directory bind-mounted to `/mnt/media` in the container (point this at your existing media pool) |
 | `CONFIG_HOST_PATH` | `/mnt/tdarr_config` | Host directory bind-mounted to `/mnt/config` (Tdarr server/config/logs) |
-| `UNPRIVILEGED` | `1` | `0` for a privileged container if you hit GPU permission issues |
 | `TDARR_MODE` | `server` | `server` (Server + local Node) or `node` (Node only, joins a remote server) |
 | `REMOTE_SERVER_IP` | *(required for `node`)* | IP/hostname of the existing Tdarr server |
 | `REMOTE_SERVER_PORT` | `8266` | Server API port of the existing Tdarr server |
@@ -172,4 +180,5 @@ default subordinate id (from `/etc/subuid`/`/etc/subgid`, normally
 `100000`) before creating the container. If you still hit this on a host
 with custom subuid/subgid ranges, either fix the ownership manually
 (`chown -R <mapped-uid>:<mapped-gid> <path>`) or re-run with
-`UNPRIVILEGED=0` for a privileged container.
+`var_unprivileged=0` (or answer No to "Create an UNPRIVILEGED container?"
+in the wizard) for a privileged container.
