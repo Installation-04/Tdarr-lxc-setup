@@ -1,6 +1,6 @@
 # Tdarr LXC Setup for Proxmox VE
 
-Spin up a Debian 12 LXC container on Proxmox with [Tdarr](https://tdarr.io/)
+Spin up a Debian 13 (trixie) LXC container on Proxmox with [Tdarr](https://tdarr.io/)
 pre-installed, automatic GPU passthrough (NVIDIA / Intel / AMD) for hardware
 transcoding, and Samba + NFS shares you can manage from a small web GUI.
 
