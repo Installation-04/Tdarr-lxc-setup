@@ -13,7 +13,7 @@
 #   bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lxc-setup/main/install.sh)"
 #
 # What it does:
-#   - Creates a Debian 12 LXC container
+#   - Creates a Debian 13 (trixie) LXC container
 #   - Detects GPU(s) on the Proxmox host (NVIDIA / Intel / AMD) and wires up
 #     passthrough automatically so Tdarr can hardware-transcode
 #   - Installs Docker + deploys Tdarr Server & Node inside the container
@@ -28,7 +28,7 @@ var_cpu="${var_cpu:-4}"
 var_ram="${var_ram:-4096}"
 var_disk="${var_disk:-12}"
 var_os="${var_os:-debian}"
-var_version="${var_version:-12}"
+var_version="${var_version:-13}"
 var_unprivileged="${var_unprivileged:-1}"
 
 # ---------------------------------------------------------------------------
@@ -304,15 +304,26 @@ fi
 # Container build
 # ---------------------------------------------------------------------------
 ensure_template() {
-  local template="${var_os}-${var_version}-standard_${var_version}.7-1_amd64.tar.zst"
+  local pattern="^${var_os}-${var_version}-standard"
+  local fallback
+  case "${var_os}-${var_version}" in
+    debian-13) fallback="debian-13-standard_13.0-1_amd64.tar.zst" ;;
+    debian-12) fallback="debian-12-standard_12.7-1_amd64.tar.zst" ;;
+    *)         fallback="${var_os}-${var_version}-standard_${var_version}.0-1_amd64.tar.zst" ;;
+  esac
+
   msg_info "Updating LXC template list..."
   pveam update >/dev/null 2>&1 || true
-  if ! pveam list "${TEMPLATE_STORAGE}" 2>/dev/null | grep -q "${template}"; then
+
+  local template
+  template="$(pveam list "${TEMPLATE_STORAGE}" 2>/dev/null | awk '{print $1}' | sed "s#.*/##" | grep -E "${pattern}" | sort -V | tail -n1)"
+
+  if [[ -z "${template}" ]]; then
     local latest
-    latest="$(pveam available -section system | awk '{print $2}' | grep -E "^${var_os}-${var_version}-standard" | sort -V | tail -n1)"
-    template="${latest:-$template}"
+    latest="$(pveam available -section system | awk '{print $2}' | grep -E "${pattern}" | sort -V | tail -n1)"
+    template="${latest:-$fallback}"
     msg_info "Downloading template ${template}..."
-    pveam download "${TEMPLATE_STORAGE}" "${template}" >/dev/null
+    pveam download "${TEMPLATE_STORAGE}" "${template}" >/dev/null || die "Failed to download ${template} - is ${var_os} ${var_version} available on this Proxmox version yet?"
   fi
   msg_ok "Template ready: ${template}"
   echo "${TEMPLATE_STORAGE}:vztmpl/${template}"
