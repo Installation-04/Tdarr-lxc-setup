@@ -19,6 +19,10 @@ msg_info() { echo -e "${C_BLUE}[setup]${C_RESET} $*"; }
 msg_ok()  { echo -e "${C_GREEN}[ok]${C_RESET} $*"; }
 
 export DEBIAN_FRONTEND=noninteractive
+# The base template has no locales generated, so apt/perl fall back to "C"
+# with a noisy warning on every invocation; C.UTF-8 is built in and silences it.
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
 
 msg_info "Updating base system..."
 apt-get update -qq
@@ -42,6 +46,18 @@ msg_ok "Docker ready: $(docker --version)"
 # ---------------------------------------------------------------------------
 if [[ "${HAS_VAAPI}" == "1" ]]; then
   msg_info "Installing VAAPI userland (Intel/AMD hw transcode)..."
+  # intel-media-va-driver-non-free lives in the non-free component, which
+  # the base template doesn't enable by default - add it if missing.
+  for f in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do
+    [[ -f "${f}" ]] || continue
+    grep -q "non-free-firmware" "${f}" && continue
+    if [[ "${f}" == *.sources ]]; then
+      sed -i -E '/^Components:/ s/$/ contrib non-free non-free-firmware/' "${f}"
+    else
+      sed -i -E 's/^(deb(-src)? [^#]*\bmain\b)$/\1 contrib non-free non-free-firmware/' "${f}"
+    fi
+  done
+  apt-get update -qq || true
   apt-get -y -qq install va-driver-all vainfo intel-media-va-driver-non-free ocl-icd-libopencl1 >/dev/null || true
 fi
 
