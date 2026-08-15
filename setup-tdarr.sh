@@ -15,38 +15,38 @@ REMOTE_SERVER_PORT="${REMOTE_SERVER_PORT:-8266}"
 NODE_NAME="${NODE_NAME:-tdarr-node}"
 
 C_RESET="\e[0m"; C_GREEN="\e[32m"; C_BLUE="\e[36m"
-msg() { echo -e "${C_BLUE}[setup]${C_RESET} $*"; }
-ok()  { echo -e "${C_GREEN}[ok]${C_RESET} $*"; }
+msg_info() { echo -e "${C_BLUE}[setup]${C_RESET} $*"; }
+msg_ok()  { echo -e "${C_GREEN}[ok]${C_RESET} $*"; }
 
 export DEBIAN_FRONTEND=noninteractive
 
-msg "Updating base system..."
+msg_info "Updating base system..."
 apt-get update -qq
 apt-get -y -qq upgrade
 
-msg "Installing base packages..."
+msg_info "Installing base packages..."
 apt-get -y -qq install curl gnupg ca-certificates lsb-release apt-transport-https software-properties-common >/dev/null
 
 # ---------------------------------------------------------------------------
 # Docker
 # ---------------------------------------------------------------------------
 if ! command -v docker >/dev/null 2>&1; then
-  msg "Installing Docker..."
+  msg_info "Installing Docker..."
   curl -fsSL https://get.docker.com | sh >/dev/null
   systemctl enable --now docker >/dev/null 2>&1
 fi
-ok "Docker ready: $(docker --version)"
+msg_ok "Docker ready: $(docker --version)"
 
 # ---------------------------------------------------------------------------
 # GPU userland (VAAPI / NVIDIA) inside the container
 # ---------------------------------------------------------------------------
 if [[ "${HAS_VAAPI}" == "1" ]]; then
-  msg "Installing VAAPI userland (Intel/AMD hw transcode)..."
+  msg_info "Installing VAAPI userland (Intel/AMD hw transcode)..."
   apt-get -y -qq install va-driver-all vainfo intel-media-va-driver-non-free ocl-icd-libopencl1 >/dev/null || true
 fi
 
 if [[ "${HAS_NVIDIA}" == "1" && -n "${NVIDIA_DRIVER_VERSION}" ]]; then
-  msg "Installing matching NVIDIA userland driver (${NVIDIA_DRIVER_VERSION})..."
+  msg_info "Installing matching NVIDIA userland driver (${NVIDIA_DRIVER_VERSION})..."
   apt-get -y -qq install build-essential pkg-config libglvnd-dev >/dev/null || true
   RUNFILE="NVIDIA-Linux-x86_64-${NVIDIA_DRIVER_VERSION}.run"
   if curl -fsSL -o "/tmp/${RUNFILE}" "https://download.nvidia.com/XFree86/Linux-x86_64/${NVIDIA_DRIVER_VERSION}/${RUNFILE}"; then
@@ -98,7 +98,7 @@ if [[ "${HAS_NVIDIA}" == "1" ]]; then
 fi
 
 if [[ "${TDARR_MODE}" == "server" ]]; then
-  msg "Writing docker-compose.yml for Tdarr Server + local Node..."
+  msg_info "Writing docker-compose.yml for Tdarr Server + local Node..."
   cat > "${COMPOSE_FILE}" <<EOF
 services:
   tdarr:
@@ -127,7 +127,7 @@ services:
       - /mnt/transcode_cache:/temp${DEVICES_YAML}${GPU_DEPLOY_YAML}
 EOF
 else
-  msg "Writing docker-compose.yml for Tdarr Node only (remote server ${REMOTE_SERVER_IP}:${REMOTE_SERVER_PORT})..."
+  msg_info "Writing docker-compose.yml for Tdarr Node only (remote server ${REMOTE_SERVER_IP}:${REMOTE_SERVER_PORT})..."
   cat > "${COMPOSE_FILE}" <<EOF
 services:
   tdarr-node:
@@ -151,14 +151,14 @@ services:
 EOF
 fi
 
-msg "Starting Tdarr..."
+msg_info "Starting Tdarr..."
 (cd /opt/tdarr && docker compose up -d)
-ok "Tdarr containers started."
+msg_ok "Tdarr containers started."
 
 # ---------------------------------------------------------------------------
 # Samba + NFS
 # ---------------------------------------------------------------------------
-msg "Installing Samba + NFS server..."
+msg_info "Installing Samba + NFS server..."
 apt-get -y -qq install samba nfs-kernel-server >/dev/null
 
 if ! grep -q "^\[Media\]" /etc/samba/smb.conf 2>/dev/null; then
@@ -193,13 +193,13 @@ chmod 600 /root/tdarr_smb_credentials.txt
 # ---------------------------------------------------------------------------
 # Cockpit + file-sharing GUI (manage the Samba/NFS shares from a browser)
 # ---------------------------------------------------------------------------
-msg "Installing Cockpit share-management GUI..."
+msg_info "Installing Cockpit share-management GUI..."
 apt-get -y -qq install cockpit >/dev/null
 curl -fsSL https://repo.45drives.com/setup | bash >/dev/null 2>&1 || true
 apt-get -y -qq install cockpit-file-sharing cockpit-navigator >/dev/null 2>&1 || true
 systemctl enable --now cockpit.socket >/dev/null 2>&1
 
-ok "Setup complete."
+msg_ok "Setup complete."
 echo
 echo "Samba user:     ${SMB_USER}"
 echo "Samba password: ${SMB_PASS}  (also saved to /root/tdarr_smb_credentials.txt)"
