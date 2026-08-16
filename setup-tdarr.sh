@@ -229,7 +229,19 @@ EOF
 fi
 
 SMB_USER="tdarr"
-SMB_PASS="${SMB_PASS:-$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)}"
+gen_password() {
+  # head reads a fixed amount from /dev/urandom first, so tr only ever sees
+  # finite input and hits a real EOF - piping tr directly from /dev/urandom
+  # into `head -c N` makes tr receive SIGPIPE (broken pipe) once head exits,
+  # which pipefail treats as a hard failure even though the password was
+  # generated correctly.
+  local pw=""
+  while [[ ${#pw} -lt 16 ]]; do
+    pw+="$(head -c 32 /dev/urandom | tr -dc 'A-Za-z0-9')"
+  done
+  echo "${pw:0:16}"
+}
+SMB_PASS="${SMB_PASS:-$(gen_password)}"
 id -u "${SMB_USER}" >/dev/null 2>&1 || $STD useradd -M -s /usr/sbin/nologin "${SMB_USER}"
 set_smb_password() { (echo "${SMB_PASS}"; echo "${SMB_PASS}") | smbpasswd -a -s "${SMB_USER}"; }
 $STD set_smb_password
