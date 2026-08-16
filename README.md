@@ -61,6 +61,7 @@ generated Samba credentials.
 | Tdarr mode | Full Server + local Node, or Node-only joining a remote server | Server + local Node |
 | Remote server (node mode only) | IP/hostname and port of the existing Tdarr server | — |
 | Node name | Name shown in the Tdarr UI | container hostname |
+| Install output | Verbose (full command output) or quiet (clean step-by-step, like the community-scripts installers) | No (quiet) |
 
 ### Unattended / scripted installs
 
@@ -102,6 +103,7 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/installation-04/tdarr-lx
 | `REMOTE_SERVER_IP` | *(required for `node`)* | IP/hostname of the existing Tdarr server |
 | `REMOTE_SERVER_PORT` | `8266` | Server API port of the existing Tdarr server |
 | `NODE_NAME` | `$CT_HOSTNAME` | Name this node shows up as in the Tdarr UI |
+| `VERBOSE` | `0` | `1` to stream full command output instead of the quiet step-by-step view |
 | `ENABLE_GPU_PASSTHROUGH` | `1` | Set to `0` to skip passthrough even if a GPU was detected |
 
 GPU detection always runs automatically, in both modes — `NONINTERACTIVE=1`
@@ -168,6 +170,19 @@ CTID=<CTID> UPDATE=1 ./install.sh
 ```
 
 This is the same thing `pct exec <CTID> -- bash -c "cd /opt/tdarr && docker compose pull && docker compose up -d"` does manually, if you'd rather run it by hand.
+
+## Install output
+
+By default the in-container setup is quiet: you only see the step-by-step
+`[setup] ...` / `[ok] ...` lines, not the full `apt-get`/`docker`/`curl`
+output underneath (the same style as the community-scripts/ProxmoxVE
+helper scripts). The full output is still captured to
+`/var/log/tdarr-setup.log` inside the container, and its last 40 lines are
+printed automatically if a step fails, so nothing is lost - it's just not
+shown by default.
+
+Answer Yes to "Show verbose (full) command output while installing?" in
+the wizard, or set `VERBOSE=1`, to stream everything live instead.
 
 ## Troubleshooting
 

@@ -58,6 +58,7 @@ REMOTE_SERVER_PORT="${REMOTE_SERVER_PORT:-8266}"
 NODE_NAME="${NODE_NAME:-${CT_HOSTNAME}}"
 
 NONINTERACTIVE="${NONINTERACTIVE:-0}"
+VERBOSE="${VERBOSE:-0}"   # 1 = stream full command output instead of the quiet step-by-step view
 
 # ---------------------------------------------------------------------------
 # Output helpers (msg_info/msg_ok/msg_error/msg_warn) - all write to stderr
@@ -158,9 +159,12 @@ detect_gpu() {
   fi
 
   if [[ -d /dev/dri ]] && ls /dev/dri/renderD* >/dev/null 2>&1; then
-    if lspci -nnk | grep -Ei "vga|3d|display" | grep -Eiq "intel|amd|ati"; then
+    # Match on PCI vendor ID (8086 = Intel, 1002 = AMD/ATI graphics), not the
+    # free-text device name - "NVIDIA Corporation" contains the substring
+    # "ati" (corpoRATIon) and would otherwise false-positive as VAAPI-capable.
+    if lspci -nnk | grep -Ei "vga|3d|display" | grep -Eq '\[(8086|1002):[0-9a-fA-F]{4}\]'; then
       HAS_VAAPI=1
-      GPU_SUMMARY="VAAPI-capable GPU detected: $(lspci -nnk | grep -Ei 'vga|3d|display' | grep -Ei 'intel|amd|ati' | head -n1)"
+      GPU_SUMMARY="VAAPI-capable GPU detected: $(lspci -nnk | grep -Ei 'vga|3d|display' | grep -E '\[(8086|1002):[0-9a-fA-F]{4}\]' | head -n1)"
       msg_ok "${GPU_SUMMARY}"
     fi
   fi
@@ -252,6 +256,13 @@ advanced_settings() {
   fi
   NODE_NAME="$(ask_input "Node name" "Name this node shows up as in the Tdarr UI:" "${NODE_NAME:-$CT_HOSTNAME}")"
 
+  if whiptail --backtitle "${WT_BACKTITLE}" --title "Install output" \
+      --yesno "Show verbose (full) command output while installing?\n\nNo (recommended) shows a clean step-by-step view like the Proxmox community-scripts installers - the full log is still saved inside the container if something goes wrong." 12 70 --defaultno; then
+    VERBOSE=1
+  else
+    VERBOSE=0
+  fi
+
   local summary="CTID:            ${CTID}
 Hostname:        ${CT_HOSTNAME}
 CPU / RAM / Swap: ${CORES} cores / ${RAM}MB / ${SWAP}MB
@@ -262,7 +273,8 @@ Media path:      ${MEDIA_HOST_PATH}
 Config path:     ${CONFIG_HOST_PATH}
 GPU passthrough: $( [[ ${ENABLE_GPU_PASSTHROUGH} -eq 1 ]] && echo "yes - ${GPU_SUMMARY}" || echo "no (CPU transcoding)" )
 Mode:            ${TDARR_MODE}$( [[ "${TDARR_MODE}" == "node" ]] && echo " -> ${REMOTE_SERVER_IP}:${REMOTE_SERVER_PORT}" )
-Node name:       ${NODE_NAME}"
+Node name:       ${NODE_NAME}
+Verbose output:  $( [[ ${VERBOSE} -eq 1 ]] && echo yes || echo "no (quiet)" )"
 
   whiptail --backtitle "${WT_BACKTITLE}" --title "Confirm" --yesno "${summary}\n\nProceed with this setup?" 22 76 || die "Setup cancelled."
 }
@@ -430,6 +442,7 @@ push_and_run_setup() {
     REMOTE_SERVER_IP="${REMOTE_SERVER_IP}" \
     REMOTE_SERVER_PORT="${REMOTE_SERVER_PORT}" \
     NODE_NAME="${NODE_NAME}" \
+    VERBOSE="${VERBOSE}" \
     /root/setup-tdarr.sh
   msg_ok "In-container setup complete."
 }
