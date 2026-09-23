@@ -263,7 +263,8 @@ advanced_settings() {
     VERBOSE=0
   fi
 
-  local summary="CTID:            ${CTID}
+  local summary
+  summary="CTID:            ${CTID}
 Hostname:        ${CT_HOSTNAME}
 CPU / RAM / Swap: ${CORES} cores / ${RAM}MB / ${SWAP}MB
 Disk:            ${DISK_SIZE}GB on ${STORAGE}
